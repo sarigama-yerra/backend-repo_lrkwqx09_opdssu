@@ -1,8 +1,13 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Any
 
-app = FastAPI()
+from schemas import Lead, Project
+from database import create_document, get_documents
+
+app = FastAPI(title="OTIKA API", description="Backend for OTIKA Digital Agency site")
 
 app.add_middleware(
     CORSMiddleware,
@@ -12,13 +17,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def read_root():
-    return {"message": "Hello from FastAPI Backend!"}
+    return {"message": "OTIKA API is running", "endpoints": ["/api/hello", "/api/leads", "/api/projects", "/test"]}
+
 
 @app.get("/api/hello")
 def hello():
-    return {"message": "Hello from the backend API!"}
+    return {"message": "Hello from the OTIKA backend API!"}
+
+
+@app.post("/api/leads")
+def create_lead(lead: Lead):
+    try:
+        lead_id = create_document("lead", lead)
+        return {"status": "ok", "id": lead_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/projects")
+def list_projects(limit: int | None = 20) -> List[Any]:
+    try:
+        items = get_documents("project", {}, limit or 0)
+        # Convert ObjectId to string safely
+        for it in items:
+            if "_id" in it:
+                it["id"] = str(it.pop("_id"))
+        return items
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/projects")
+def create_project(project: Project):
+    try:
+        proj_id = create_document("project", project)
+        return {"status": "ok", "id": proj_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/test")
 def test_database():
@@ -33,7 +72,6 @@ def test_database():
     }
     
     try:
-        # Try to import database module
         from database import db
         
         if db is not None:
@@ -42,10 +80,9 @@ def test_database():
             response["database_name"] = db.name if hasattr(db, 'name') else "✅ Connected"
             response["connection_status"] = "Connected"
             
-            # Try to list collections to verify connectivity
             try:
                 collections = db.list_collection_names()
-                response["collections"] = collections[:10]  # Show first 10 collections
+                response["collections"] = collections[:10]
                 response["database"] = "✅ Connected & Working"
             except Exception as e:
                 response["database"] = f"⚠️  Connected but Error: {str(e)[:50]}"
@@ -57,12 +94,25 @@ def test_database():
     except Exception as e:
         response["database"] = f"❌ Error: {str(e)[:50]}"
     
-    # Check environment variables
     import os
     response["database_url"] = "✅ Set" if os.getenv("DATABASE_URL") else "❌ Not Set"
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
     
     return response
+
+
+class SchemaOut(BaseModel):
+    name: str
+    schema: dict
+
+
+@app.get("/schema", response_model=List[SchemaOut])
+def get_schema():
+    """Expose schemas for the database viewer"""
+    return [
+        {"name": "lead", "schema": Lead.model_json_schema()},
+        {"name": "project", "schema": Project.model_json_schema()},
+    ]
 
 
 if __name__ == "__main__":
